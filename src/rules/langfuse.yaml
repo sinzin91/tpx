@@ -1,0 +1,25 @@
+schema_version: 1
+name: langfuse
+host_patterns:
+  - cloud.langfuse.com
+  - us.cloud.langfuse.com
+default_policy: deny
+
+rules:
+  - match:
+      host: cloud.langfuse.com
+      methods: [GET]
+      path: /api/public
+      path_match: prefix
+    classification: read
+    action: allow
+    reason: All public read endpoints (traces, observations, scores, sessions, datasets).
+
+  - match:
+      host: us.cloud.langfuse.com
+      methods: [GET]
+      path: /api/public
+      path_match: prefix
+    classification: read
+    action: allow
+    reason: All public read endpoints (US region).

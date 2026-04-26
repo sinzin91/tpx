@@ -1,0 +1,42 @@
+schema_version: 1
+name: vercel
+host_patterns:
+  - api.vercel.com
+default_policy: deny
+
+rules:
+  - match:
+      host: api.vercel.com
+      methods: [GET]
+      path: /v6/deployments
+      path_match: prefix
+    classification: read
+    action: allow
+    reason: List and inspect deployments.
+
+  - match:
+      host: api.vercel.com
+      methods: [GET]
+      path: /v9/projects
+      path_match: prefix
+    classification: read
+    action: allow
+    reason: List and inspect projects.
+
+  - match:
+      host: api.vercel.com
+      methods: [GET]
+      path: /v1/teams
+      path_match: prefix
+    classification: read
+    action: allow
+    reason: Read team membership.
+
+  - match:
+      host: api.vercel.com
+      methods: [DELETE]
+      path: /
+      path_match: prefix
+    classification: write
+    action: deny
+    reason: All DELETE explicitly blocked.
