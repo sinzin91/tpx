@@ -205,6 +205,40 @@ async fn credentials_must_be_mode_0600_to_authenticate() {
 }
 
 #[tokio::test]
+async fn upstream_response_exceeding_cap_is_rejected() {
+    let server = MockServer::start().await;
+    // Build a body just over the configured cap.
+    let mut config = build_mock_config(&server);
+    config.max_body_bytes = 1024;
+    let oversized = "x".repeat(config.max_body_bytes + 1);
+    Mock::given(method("GET"))
+        .and(path("/v1/items"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(oversized))
+        .mount(&server)
+        .await;
+    let host = reqwest::Url::parse(config.base_url)
+        .unwrap()
+        .host_str()
+        .unwrap()
+        .to_string();
+    let req = HttpRequest::builder()
+        .method("GET")
+        .host(host)
+        .path("/v1/items")
+        .build()
+        .unwrap();
+    let mut creds = BTreeMap::new();
+    creds.insert("token".into(), "t".into());
+    let err = execute_provider_request(&config, &req, &creds)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        tpx::provider_runtime::RuntimeError::BodyTooLarge { .. }
+    ));
+}
+
+#[tokio::test]
 async fn full_pipeline_writes_jsonl_decision() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

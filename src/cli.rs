@@ -154,10 +154,21 @@ fn run_explain(cli: &Cli, args: RequestArgs) -> u8 {
         Ok(v) => v,
         Err(code) => return code,
     };
-    let registry = match build_registry(cli, &config) {
-        Ok(r) => r,
+    // Load rules once and reuse for both the registry and the diagnostic
+    // lookup, so `tpx explain` shows the rule the engine actually matched
+    // against (which may be a custom override, not the bundled YAML).
+    let provider = match load_provider_rules(cli, &config) {
+        Ok(p) => p,
         Err(code) => return code,
     };
+    let mut registry = ValidatorRegistry::new();
+    if let Err(e) = registry.register(Box::new(YamlValidator::new(
+        provider.clone(),
+        Some(config.max_body_bytes),
+    ))) {
+        emit_error("validation", &e.to_string(), None);
+        return EXIT_VALIDATION_ERROR;
+    }
     let outcome = validate_request(&request, &registry);
     let extra = json!({
         "provider": config.name,
@@ -168,8 +179,6 @@ fn run_explain(cli: &Cli, args: RequestArgs) -> u8 {
         },
         "matched_rule_index": outcome.matched_rule_index,
         "rule": outcome.matched_rule_index.and_then(|idx| {
-            // Look up the matching rule for diagnostics.
-            let provider = TpxProviderRules::from_yaml(config.bundled_rules).ok()?;
             provider.rules.get(idx).map(|r| json!({
                 "match": {
                     "host": r.r#match.host,
@@ -368,15 +377,16 @@ fn prepare(args: &RequestArgs) -> Result<(ProviderConfig, HttpRequest), u8> {
     }
 }
 
-fn build_registry(cli: &Cli, config: &ProviderConfig) -> Result<ValidatorRegistry, u8> {
+fn load_provider_rules(cli: &Cli, config: &ProviderConfig) -> Result<TpxProviderRules, u8> {
     let yaml_text = load_rules_yaml(cli, config)?;
-    let provider = match TpxProviderRules::from_yaml(&yaml_text) {
-        Ok(p) => p,
-        Err(e) => {
-            emit_error("validation", &format!("rules: {}", e.0), None);
-            return Err(EXIT_VALIDATION_ERROR);
-        }
-    };
+    TpxProviderRules::from_yaml(&yaml_text).map_err(|e| {
+        emit_error("validation", &format!("rules: {}", e.0), None);
+        EXIT_VALIDATION_ERROR
+    })
+}
+
+fn build_registry(cli: &Cli, config: &ProviderConfig) -> Result<ValidatorRegistry, u8> {
+    let provider = load_provider_rules(cli, config)?;
     let mut registry = ValidatorRegistry::new();
     if let Err(e) = registry.register(Box::new(YamlValidator::new(
         provider,

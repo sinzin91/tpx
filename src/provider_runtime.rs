@@ -84,7 +84,7 @@ pub async fn execute_provider_request(
     }
 
     let started = Instant::now();
-    let response = req.send().await?;
+    let mut response = req.send().await?;
     let status = response.status().as_u16();
     let mut headers = BTreeMap::new();
     for (k, v) in response.headers() {
@@ -93,15 +93,18 @@ pub async fn execute_provider_request(
             v.to_str().unwrap_or("").to_string(),
         );
     }
-    // Cap response body using content-length when present; otherwise read up
-    // to the limit and bail if we hit it.
+    // Stream the body chunk-by-chunk so a misbehaving upstream returning
+    // gigabytes can't OOM us before we get a chance to refuse it.
     let limit = config.max_body_bytes;
-    let bytes = response.bytes().await?;
-    if bytes.len() > limit {
-        return Err(RuntimeError::BodyTooLarge { limit });
+    let mut buf: Vec<u8> = Vec::with_capacity(8 * 1024);
+    while let Some(chunk) = response.chunk().await? {
+        if buf.len() + chunk.len() > limit {
+            return Err(RuntimeError::BodyTooLarge { limit });
+        }
+        buf.extend_from_slice(&chunk);
     }
     let latency_ms = started.elapsed().as_millis();
-    let body_text = String::from_utf8_lossy(&bytes).into_owned();
+    let body_text = String::from_utf8_lossy(&buf).into_owned();
     let body_json = serde_json::from_str::<serde_json::Value>(&body_text).ok();
 
     Ok(ProviderResponse {

@@ -56,17 +56,22 @@ impl Validator for YamlValidator {
                 )
                 .expect("matched rule produces valid inspection result")
             }
-            None => InspectionResult::new(
-                RequestClassification::Unknown,
-                InspectionConfidence::Low,
-                format!(
+            None => {
+                // Request-derived; sanitize to guarantee single-line.
+                let reason = format!(
                     "No rule matches {} {}{}",
                     request.method, request.host, request.path
-                ),
-                None,
-                InspectionDisposition::NoMatchingRule,
-            )
-            .expect("no-match inspection result is well-formed"),
+                )
+                .replace(['\n', '\r'], " ");
+                InspectionResult::new(
+                    RequestClassification::Unknown,
+                    InspectionConfidence::Low,
+                    reason,
+                    None,
+                    InspectionDisposition::NoMatchingRule,
+                )
+                .expect("sanitized no-match inspection is well-formed")
+            }
         }
     }
 
@@ -76,16 +81,17 @@ impl Validator for YamlValidator {
         _inspection: &InspectionResult,
     ) -> (ToolPermissionDecision, Option<usize>) {
         let Some(matched) = find_matching_rule(&self.provider, request) else {
+            // Reason includes request-derived path; sanitize to guarantee
+            // single-line so deny() never panics on hostile input.
             return (
-                ToolPermissionDecision::deny(
+                ToolPermissionDecision::deny_safe(
                     DecisionCode::DefaultDeny,
                     format!(
                         "No rule matches {} {}{}",
                         request.method, request.host, request.path
                     ),
                     PermissionSource::DefaultDeny,
-                )
-                .expect("default-deny reason is well-formed"),
+                ),
                 None,
             );
         };
@@ -99,12 +105,11 @@ impl Validator for YamlValidator {
                 Some(matched.index),
             ),
             RuleAction::Deny => (
-                ToolPermissionDecision::deny(
+                ToolPermissionDecision::deny_safe(
                     DecisionCode::DefaultDeny,
                     matched.rule.reason.clone(),
                     PermissionSource::RuleEngine,
-                )
-                .expect("deny reason validated at YAML load time"),
+                ),
                 Some(matched.index),
             ),
         }
@@ -179,6 +184,21 @@ rules:
             PermissionSource::RuleEngine
         );
         assert_eq!(outcome.matched_rule_index, Some(1));
+    }
+
+    #[test]
+    fn no_match_with_newline_in_path_does_not_panic() {
+        // Regression: pre-fix the deny path used .expect() on a reason that
+        // included request.path, which crashes when the path contains \n.
+        let r = HttpRequest::builder()
+            .method("PATCH")
+            .host("api.vercel.com")
+            .path("/v9/projects/foo\nbar")
+            .build()
+            .unwrap();
+        let outcome = validate_request(&r, &registry());
+        assert!(!outcome.allowed);
+        assert!(!outcome.permission.reason.contains('\n'));
     }
 
     #[test]

@@ -482,6 +482,27 @@ impl ToolPermissionDecision {
             code,
         })
     }
+
+    /// Build a deny decision from a possibly-untrusted reason string.
+    ///
+    /// Sanitizes newlines (the only way `normalize_reason` rejects an input
+    /// for non-empty values) so that callers formatting in user-derived data
+    /// can never panic. Falls back to a static `"deny"` reason if even that
+    /// somehow fails — which shouldn't happen, but the guarantee is more
+    /// valuable than the warning.
+    pub fn deny_safe(
+        code: DecisionCode,
+        reason: impl AsRef<str>,
+        permission_source: PermissionSource,
+    ) -> Self {
+        let sanitized = reason.as_ref().replace(['\n', '\r'], " ");
+        Self::deny(code, &sanitized, permission_source).unwrap_or_else(|_| Self {
+            allowed: false,
+            reason: "deny".to_string(),
+            permission_source,
+            code,
+        })
+    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -722,5 +743,17 @@ mod tests {
     fn reason_rejects_multiline() {
         let err = normalize_reason("a\nb").unwrap_err();
         assert!(err.0.contains("single-line"));
+    }
+
+    #[test]
+    fn deny_safe_sanitizes_newlines_in_user_input() {
+        let d = ToolPermissionDecision::deny_safe(
+            DecisionCode::DefaultDeny,
+            "no rule for path\nwith newline\rand cr",
+            PermissionSource::DefaultDeny,
+        );
+        assert!(!d.allowed);
+        assert!(!d.reason.contains('\n'));
+        assert!(!d.reason.contains('\r'));
     }
 }
