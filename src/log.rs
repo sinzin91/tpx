@@ -3,6 +3,7 @@
 //! Per spec §9: one decision per line, no body content / header values /
 //! query values. Rotates at 10 MiB to a single `.1` rollover.
 
+use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -130,18 +131,21 @@ impl DecisionLog {
             }
         };
         let reader = BufReader::new(file);
-        let mut lines: Vec<String> = Vec::new();
+        // VecDeque + pop_front gives an O(1) sliding window; the previous
+        // Vec::remove(0) was O(n) per insert past the cap. push then trim
+        // (rather than trim-then-push) preserves the n=0 case correctly.
+        let mut window: VecDeque<String> = VecDeque::with_capacity(n);
         for line in reader.lines() {
             let line = line.map_err(|e| LogError::Io {
                 path: self.path.clone(),
                 source: e,
             })?;
-            lines.push(line);
-            if lines.len() > n {
-                lines.remove(0);
+            window.push_back(line);
+            while window.len() > n {
+                window.pop_front();
             }
         }
-        Ok(lines)
+        Ok(window.into_iter().collect())
     }
 }
 

@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +24,7 @@ use thiserror::Error;
 pub enum CredentialError {
     #[error("credentials file {0} not found")]
     NotFound(PathBuf),
+    #[cfg(unix)]
     #[error("credentials file {path} must be mode 0600 (got {mode:#o})")]
     BadMode { path: PathBuf, mode: u32 },
     #[error("credentials file {path}: {source}")]
@@ -65,13 +67,21 @@ impl CredentialStore {
                 });
             }
         };
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode != 0o600 {
-            return Err(CredentialError::BadMode {
-                path: path.to_path_buf(),
-                mode,
-            });
+        // Mode-0600 enforcement is the boundary on Unix. On other platforms
+        // we can't represent the same check, so we trust the user to keep
+        // the file private. Spec is explicit about the unix-only target.
+        #[cfg(unix)]
+        {
+            let mode = metadata.permissions().mode() & 0o777;
+            if mode != 0o600 {
+                return Err(CredentialError::BadMode {
+                    path: path.to_path_buf(),
+                    mode,
+                });
+            }
         }
+        #[cfg(not(unix))]
+        let _ = metadata;
         let text = fs::read_to_string(path).map_err(|e| CredentialError::Io {
             path: path.to_path_buf(),
             source: e,
@@ -114,7 +124,7 @@ pub fn default_path() -> PathBuf {
     home.join(".tpx").join("credentials.json")
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::Write;

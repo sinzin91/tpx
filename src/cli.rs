@@ -312,25 +312,56 @@ fn parse_provider_args(raw: Vec<String>) -> Result<RequestArgs, String> {
         content_type: None,
     };
     while let Some(flag) = iter.next() {
-        match flag.as_str() {
+        // Support both --flag value and --flag=value.
+        let take_value =
+            |flag: &str, inline: Option<&str>, iter: &mut std::vec::IntoIter<String>| {
+                inline
+                    .map(|s| s.to_string())
+                    .or_else(|| iter.next())
+                    .ok_or_else(|| format!("{flag} needs a value"))
+            };
+        let (name, inline) = match flag.split_once('=') {
+            Some((n, v)) => (n.to_string(), Some(v.to_string())),
+            None => (flag.clone(), None),
+        };
+        match name.as_str() {
             "--query" => {
-                let kv = iter.next().ok_or("--query needs key=value")?;
+                let kv = take_value("--query", inline.as_deref(), &mut iter)?;
                 args.query.push(parse_kv_eq(&kv)?);
             }
             "--header" => {
-                let kv = iter.next().ok_or("--header needs key:value")?;
+                let kv = take_value("--header", inline.as_deref(), &mut iter)?;
                 args.header.push(parse_kv_colon(&kv)?);
             }
             "--body" => {
-                args.body = Some(iter.next().ok_or("--body needs a value")?);
+                let raw = take_value("--body", inline.as_deref(), &mut iter)?;
+                args.body = Some(resolve_body(&raw)?);
             }
             "--content-type" => {
-                args.content_type = Some(iter.next().ok_or("--content-type needs a value")?);
+                args.content_type =
+                    Some(take_value("--content-type", inline.as_deref(), &mut iter)?);
             }
             other => return Err(format!("unknown flag {other}")),
         }
     }
     Ok(args)
+}
+
+/// Resolve a `--body` argument per the spec:
+/// - `@<path>` reads bytes from the file at `<path>`.
+/// - `-` reads from stdin.
+/// - Anything else is the literal body string.
+fn resolve_body(raw: &str) -> Result<String, String> {
+    if raw == "-" {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .map_err(|e| format!("--body -: stdin read failed: {e}"))?;
+        return Ok(buf);
+    }
+    if let Some(path) = raw.strip_prefix('@') {
+        return std::fs::read_to_string(path).map_err(|e| format!("--body @{path}: {e}"));
+    }
+    Ok(raw.to_string())
 }
 
 fn prepare(args: &RequestArgs) -> Result<(ProviderConfig, HttpRequest), u8> {
