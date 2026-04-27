@@ -31,6 +31,12 @@ require reading it, that's a sign to use `tpx` instead. The Read tool is
 denied on that exact path to make accidents harder, but the real contract is
 *don't try*.
 
+> **Prerequisite:** the `Read(~/.tpx/credentials.json)` deny and the
+> `Bash(tpx:*)` allow are enforced by user-level config in
+> `~/.claude/settings.json` (machine-wide) — not by anything in this repo.
+> A fresh clone on another machine needs the same two rules added there
+> for the boundary to apply.
+
 You **can** (and often should) read the other files under `~/.tpx/`:
 
 - `~/.tpx/rules/<provider>.yaml` — runtime override rules; check before proposing changes.
